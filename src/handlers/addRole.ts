@@ -52,10 +52,11 @@ export const extractTrailingEmojis = (text: string): string[] => {
 export const command_addRole = factory.autocomplete(
   new Command(
     'add_role',
-    'Assign a role to a message author and react with role emojis.',
+    'Assign a role to a user or message author and react with role emojis.',
   ).options(
     new Option('role', 'Role to assign').autocomplete().required(),
-    new Option('message', 'Message ID or link'),
+    new Option('message', 'Target message ID or link (optional)'),
+    new Option('user', 'Target user to apply role to (optional)', 'User'),
   ),
   async (c) => {
     const guildId = c.interaction.guild_id ?? c.env.DISCORD_TEST_GUILD_ID
@@ -153,12 +154,12 @@ export const command_addRole = factory.autocomplete(
       }
     }
 
-    if (!targetMessage || !targetMessage.author?.id) {
-      return c.flags('EPHEMERAL').res('Message not found.')
-    }
+    const explicitUserId = c.var.user
+    const targetUserId = explicitUserId ?? targetMessage?.author?.id
 
-    const targetUserId = targetMessage.author.id
-    const targetMessageId = targetMessage.id
+    if (!targetUserId) {
+      return c.flags('EPHEMERAL').res('Target user not found.')
+    }
 
     const applyRes = await c.rest(
       'PUT',
@@ -170,22 +171,21 @@ export const command_addRole = factory.autocomplete(
       return c.flags('EPHEMERAL').res('Failed to apply role.')
     }
 
-    const emojis = extractTrailingEmojis(selectedRole.name)
+    if (targetMessage) {
+      const emojis = extractTrailingEmojis(selectedRole.name)
+      const allEmojis = [...emojis, '🏅']
 
-    for (const emoji of emojis) {
-      await c.rest(
-        'PUT',
-        '/channels/{channel.id}/messages/{message.id}/reactions/{emoji}/@me',
-        [channelId, targetMessageId, encodeURIComponent(emoji)],
-      )
+      for (const emoji of allEmojis) {
+        await c.rest(
+          'PUT',
+          '/channels/{channel.id}/messages/{message.id}/reactions/{emoji}/@me',
+          [channelId, targetMessage.id, encodeURIComponent(emoji)],
+        )
+      }
+
+      return c.flags('EPHEMERAL').res('Role applied and reactions added.')
     }
 
-    return c
-      .flags('EPHEMERAL')
-      .res(
-        emojis.length > 0
-          ? 'Role applied and reactions added.'
-          : 'Role applied.',
-      )
+    return c.flags('EPHEMERAL').res('Role applied.')
   },
 )

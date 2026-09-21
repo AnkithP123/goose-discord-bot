@@ -114,6 +114,7 @@ describe('command_addRole handler', () => {
     channelId = 'channel-456',
     role = 'role-1',
     message,
+    user,
     interactionMessage,
     resolvedMessages,
     roles = [
@@ -130,10 +131,11 @@ describe('command_addRole handler', () => {
     channelId?: string
     role?: string
     message?: string
+    user?: string
     interactionMessage?: unknown
     resolvedMessages?: Record<string, unknown>
     roles?: { id: string; name: string }[]
-    targetMessage?: { id: string; author?: { id: string } }
+    targetMessage?: { id: string; author?: { id: string } } | null
   }) => {
     const restCalls: {
       method: string
@@ -162,6 +164,7 @@ describe('command_addRole handler', () => {
       var: {
         role,
         message,
+        user,
       },
       flags: vi.fn(() => ({
         res: resMock,
@@ -182,10 +185,14 @@ describe('command_addRole handler', () => {
             method === 'GET' &&
             path === '/channels/{channel.id}/messages/{message.id}'
           ) {
-            return { ok: true, json: async () => targetMessage }
+            return targetMessage
+              ? { ok: true, json: async () => targetMessage }
+              : { ok: false, status: 404 }
           }
           if (method === 'GET' && path === '/channels/{channel.id}/messages') {
-            return { ok: true, json: async () => [targetMessage] }
+            return targetMessage
+              ? { ok: true, json: async () => [targetMessage] }
+              : { ok: true, json: async () => [] }
           }
           if (
             method === 'PUT' &&
@@ -216,7 +223,7 @@ describe('command_addRole handler', () => {
     expect(resMock).toHaveBeenCalledWith('Unauthorized.')
   })
 
-  it('applies role and reacts with trailing emojis', async () => {
+  it('applies role and reacts with trailing emojis followed by medal', async () => {
     const { context, restCalls, resMock } = createMockContext({
       role: 'role-1',
     })
@@ -231,21 +238,20 @@ describe('command_addRole handler', () => {
     expect(rolePutCall).toBeDefined()
     expect(rolePutCall?.vars).toEqual(['guild-123', 'target-user-1', 'role-1'])
 
-    const reactCall = restCalls.find(
+    const reactCalls = restCalls.filter(
       (c) =>
         c.method === 'PUT' &&
         c.path ===
           '/channels/{channel.id}/messages/{message.id}/reactions/{emoji}/@me',
     )
-    expect(reactCall).toBeDefined()
-    expect(reactCall?.vars[0]).toBe('channel-456')
-    expect(reactCall?.vars[1]).toBe('target-msg-1')
-    expect(decodeURIComponent(reactCall?.vars[2] as string)).toBe('🌟')
+    expect(reactCalls).toHaveLength(2)
+    expect(decodeURIComponent(reactCalls[0]?.vars[2] as string)).toBe('🌟')
+    expect(decodeURIComponent(reactCalls[1]?.vars[2] as string)).toBe('🏅')
 
     expect(resMock).toHaveBeenCalledWith('Role applied and reactions added.')
   })
 
-  it('applies role without reacting if role has no trailing emojis', async () => {
+  it('reacts with medal even when role has no trailing emojis', async () => {
     const { context, restCalls, resMock } = createMockContext({
       role: 'role-no-emoji',
     })
@@ -259,15 +265,63 @@ describe('command_addRole handler', () => {
     )
     expect(rolePutCall).toBeDefined()
 
-    const reactCall = restCalls.find(
+    const reactCalls = restCalls.filter(
       (c) =>
         c.method === 'PUT' &&
         c.path ===
           '/channels/{channel.id}/messages/{message.id}/reactions/{emoji}/@me',
     )
-    expect(reactCall).toBeUndefined()
+    expect(reactCalls).toHaveLength(1)
+    expect(decodeURIComponent(reactCalls[0]?.vars[2] as string)).toBe('🏅')
+
+    expect(resMock).toHaveBeenCalledWith('Role applied and reactions added.')
+  })
+
+  it('applies role directly to explicit user without requiring message', async () => {
+    const { context, restCalls, resMock } = createMockContext({
+      user: 'explicit-user-456',
+      targetMessage: null,
+    })
+
+    await command_addRole.handler(context as never)
+
+    const rolePutCall = restCalls.find(
+      (c) =>
+        c.method === 'PUT' &&
+        c.path === '/guilds/{guild.id}/members/{user.id}/roles/{role.id}',
+    )
+    expect(rolePutCall).toBeDefined()
+    expect(rolePutCall?.vars).toEqual([
+      'guild-123',
+      'explicit-user-456',
+      'role-1',
+    ])
+
+    const reactCalls = restCalls.filter(
+      (c) =>
+        c.method === 'PUT' &&
+        c.path ===
+          '/channels/{channel.id}/messages/{message.id}/reactions/{emoji}/@me',
+    )
+    expect(reactCalls).toHaveLength(0)
 
     expect(resMock).toHaveBeenCalledWith('Role applied.')
+  })
+
+  it('prefers explicit user option over message author when both are present', async () => {
+    const { context, restCalls } = createMockContext({
+      user: 'override-user-789',
+      role: 'role-1',
+    })
+
+    await command_addRole.handler(context as never)
+
+    const rolePutCall = restCalls.find(
+      (c) =>
+        c.method === 'PUT' &&
+        c.path === '/guilds/{guild.id}/members/{user.id}/roles/{role.id}',
+    )
+    expect(rolePutCall?.vars[1]).toBe('override-user-789')
   })
 
   it('resolves message from interaction reply message', async () => {
