@@ -28,6 +28,13 @@ const commands = [
   ),
   new Command('help', 'Learn about the bot commands.'),
   new Command('honk', 'Check on Goose Bot.'),
+  new Command(
+    'add_role',
+    'Assign a role to a message author and react with role emojis.',
+  ).options(
+    new Option('role', 'Role to assign').autocomplete().required(),
+    new Option('message', 'Message ID or link'),
+  ),
   new Command('namecolor', 'Set or remove your name color role.').options(
     new Option('color', 'Name color role').autocomplete().required(),
   ),
